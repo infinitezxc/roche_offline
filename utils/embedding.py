@@ -1,5 +1,6 @@
 from typing import List
 import re
+import asyncio
 
 import aiohttp
 import numpy as np
@@ -31,11 +32,20 @@ async def get_embedding(text: List[str]):
     return [normalize_embedding(x.embedding) for x in response.data]
 
 
-async def get_sparse_embedding(text: List[str]):
+async def get_sparse_embedding(text: List[str], max_retries: int = 3, timeout: int = 3):
     cleaned_text = [clean_html_tags(t) for t in text]
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            f"{config.embedding_url_sparse}/sparse_embed", json={"text": cleaned_text}
-        ) as response:
-            r = await response.json()
-            return r
+
+    for attempt in range(max_retries):
+        try:
+            timeout_obj = aiohttp.ClientTimeout(total=timeout)
+            async with aiohttp.ClientSession(timeout=timeout_obj) as session:
+                async with session.post(
+                    f"{config.embedding_url_sparse}/sparse_embed", json={"text": cleaned_text}
+                ) as response:
+                    r = await response.json()
+                    return r
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            if attempt == max_retries - 1:
+                raise
+            wait_time = 2 ** attempt
+            await asyncio.sleep(wait_time)

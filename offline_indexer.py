@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import List, Dict, Any
 from tqdm.asyncio import tqdm
 import traceback
+import multiprocessing as mp
+from functools import partial
 
 # Import required modules from the existing codebase
 from json_repair import repair_json
@@ -34,7 +36,7 @@ from utils.open_api import qwen_vl_predict
 from utils.lang_detect import detect_language
 
 
-async def get_file_metadata(file_name: str) -> Dict[str, str]:
+async def get_file_metadata(content: List[str], file_name: str) -> Dict[str, str]:
     """
     Generate file metadata using Qwen model.
 
@@ -51,7 +53,7 @@ async def get_file_metadata(file_name: str) -> Dict[str, str]:
     }}
     """
     file_summary = await qwen_vl_predict(
-        sys_prompt=sys_prompt, user_prompt=f"file_name: {file_name}"
+        sys_prompt=sys_prompt, user_prompt=f"file_name: {file_name}\nfirst page:\n{content[0]}"
     )
     return eval(repair_json(file_summary))
 
@@ -159,53 +161,95 @@ def load_ocr_json(file_path: str) -> Dict[str, Any]:
         return json.load(f)
 
 
-async def process_single_item(key: str, file_name: str, content: List[str], semaphore: asyncio.Semaphore) -> tuple:
+def process_single_file_sync(args):
     """
-    Process a single OCR item asynchronously with concurrency control.
+    Synchronous wrapper for processing a single file in a separate process.
 
     Args:
-        key: The OCR data key
-        file_name: Name of the file
-        content: OCR text content
-        semaphore: Semaphore to control concurrency
+        args: Tuple of (key, file_name, content, timeout)
 
     Returns:
-        Tuple of (key, processed_data)
+        Tuple of (key, result) or (key, None) if failed
     """
-    async with semaphore:
+    key, file_name, content, timeout = args
+    loop = None
+
+    try:
+        # Check if there's already an event loop
         try:
-            # Get file metadata
-            metadata = await get_file_metadata(file_name)
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                loop = None
+        except RuntimeError:
+            loop = None
 
-            # Process content
-            processed_content = await process_content(content, file_name)
+        # Create a new event loop if needed
+        if loop is None:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
 
-            # Generate embeddings
-            embeddings, sparse_embeddings = await generate_embeddings(processed_content)
+        # Run the async processing
+        result = loop.run_until_complete(
+            asyncio.wait_for(
+                process_single_file_async(key, file_name, content),
+                timeout=timeout
+            )
+        )
 
-            result = {
-                "file_name": file_name,
-                "metadata": metadata,
-                "processed_content": processed_content,
-                "embeddings": embeddings,
-                "sparse_embeddings": sparse_embeddings
-            }
+        return key, result
 
-            return key, result
-        except Exception as e:
-            print(f"Error processing {file_name}: {str(e)}")
-            print(traceback.format_exc())
-            raise
+    except asyncio.TimeoutError:
+        print(f"Process timeout for {file_name} ({len(content)} pages) after {timeout}s")
+        return key, None
+    except Exception as e:
+        print(f"Process error for {file_name} ({len(content)} pages): {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return key, None
 
 
-async def main():
-    """Main processing function."""
+async def process_single_file_async(key: str, file_name: str, content: List[str]):
+    """
+    Async processing logic for a single file (no semaphore needed in separate process).
+    """
+    try:
+        # Get file metadata
+        metadata = await get_file_metadata(content, file_name)
+
+        # Process content
+        processed_content = await process_content(content, file_name)
+
+        # Generate embeddings
+        embeddings, sparse_embeddings = await generate_embeddings(processed_content)
+
+        result = {
+            "file_name": file_name,
+            "metadata": metadata,
+            "processed_content": processed_content,
+            "embeddings": embeddings,
+            "sparse_embeddings": sparse_embeddings
+        }
+
+        return result
+    except Exception as e:
+        print(f"Error in async processing for {file_name}: {str(e)}")
+        raise
+
+
+def main():
+    """Main processing function using multiprocessing."""
     if len(sys.argv) < 2:
         print("Usage: python offline_ocr_processor.py <ocr_json_file> [output_file]")
         sys.exit(1)
 
     input_file = sys.argv[1]
-    output_file = sys.argv[2] if len(sys.argv) > 2 else f"{Path(input_file).stem}_processed.json"
+
+    # Create data/index directory if it doesn't exist
+    output_dir = Path("data/index")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    default_output = output_dir / f"{Path(input_file).stem}_processed.json"
+    output_file = sys.argv[2] if len(sys.argv) > 2 else str(default_output)
 
     if not Path(input_file).exists():
         print(f"Error: Input file '{input_file}' not found")
@@ -223,34 +267,75 @@ async def main():
     try:
         # Load OCR JSON data
         ocr_data = load_ocr_json(input_file)
-        output_data = {}
 
-        # Control concurrency - adjust this value based on your system and API limits
-        max_concurrent_files = 32  # Process up to 32 files concurrently
-        semaphore = asyncio.Semaphore(max_concurrent_files)
+        # Prepare tasks for multiprocessing
+        timeout_per_file = 180  # 3 minutes per file
+        max_workers = min(mp.cpu_count(), 32)  # Limit to avoid overwhelming the system
 
-        # Prepare tasks for concurrent processing
         tasks = []
-        all_keys = list(ocr_data.keys())
+        all_keys = sorted(list(ocr_data.keys()))
         for key in all_keys:
             file_name = mapping[key.removeprefix("ocr_results:ocr_")]
             content = ocr_data[key]['text']
-            tasks.append(process_single_item(key, file_name, content, semaphore))
+            tasks.append((key, file_name, content, timeout_per_file))
 
-        print(f"Processing {len(tasks)} files with max {max_concurrent_files} concurrent files...")
+        print(f"Processing {len(tasks)} files with {max_workers} workers...")
 
-        # Process all items concurrently with progress bar
-        results = await tqdm.gather(*tasks, desc="Processing files")
+        # Process items in batches with multiprocessing
+        batch_size = 5000
+        part_number = 1
+        all_results = {}
 
-        # Collect results
-        for key, result in results:
-            output_data[key] = result
-            print(f"Processed {result['file_name']}")
+        total_batches = (len(tasks) + batch_size - 1) // batch_size
 
-        # Save results
-        print(f"Saving results to: {output_file}")
+        for i in range(0, len(tasks), batch_size):
+            # Check if part file already exists
+            part_file = output_dir / f"{Path(output_file).stem}_part_{part_number:03d}.json"
+
+            if part_file.exists():
+                print(f"Part file {part_file} already exists, skipping batch {part_number}/{total_batches}")
+                # Load existing data to include in final result
+                with open(part_file, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+                    all_results.update(existing_data)
+                part_number += 1
+                continue
+
+            batch_tasks = tasks[i:i + batch_size]
+            print(f"Processing batch {part_number}/{total_batches} with {len(batch_tasks)} files...")
+
+            # Process batch using multiprocessing
+            batch_data = {}
+
+            # Use multiprocessing Pool to process files in parallel
+            with mp.Pool(processes=max_workers) as pool:
+                # Use tqdm for progress tracking
+                with tqdm(total=len(batch_tasks), desc=f"Batch {part_number}/{total_batches}") as pbar:
+                    results = []
+                    for result in pool.imap_unordered(process_single_file_sync, batch_tasks):
+                        results.append(result)
+                        pbar.update(1)
+
+                    for key, file_result in results:
+                        if file_result is not None:
+                            batch_data[key] = file_result
+                            all_results[key] = file_result
+                        else:
+                            print(f"Skipping failed file: {key}")
+
+            print(f"Batch {part_number} completed: {len(batch_data)} files processed successfully")
+
+            # Save part file
+            print(f"Saving batch {part_number} to: {part_file}")
+            with open(part_file, 'w', encoding='utf-8') as f:
+                json.dump(batch_data, f, ensure_ascii=False, indent=2)
+
+            part_number += 1
+
+        # Save complete results
+        print(f"Saving complete results to: {output_file}")
         with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(output_data, f, ensure_ascii=False, indent=2)
+            json.dump(all_results, f, ensure_ascii=False, indent=2)
 
     except Exception as e:
         print(f"Error processing file: {str(e)}")
@@ -259,4 +344,11 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Set multiprocessing start method to avoid issues with event loops
+    try:
+        mp.set_start_method('spawn')
+    except RuntimeError:
+        # Start method can only be set once
+        pass
+
+    main()
