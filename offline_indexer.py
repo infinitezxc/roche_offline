@@ -24,6 +24,8 @@ import re
 import sys
 from pathlib import Path
 from typing import List, Dict, Any
+from tqdm.asyncio import tqdm
+import traceback
 
 # Import required modules from the existing codebase
 from json_repair import repair_json
@@ -157,6 +159,45 @@ def load_ocr_json(file_path: str) -> Dict[str, Any]:
         return json.load(f)
 
 
+async def process_single_item(key: str, file_name: str, content: List[str], semaphore: asyncio.Semaphore) -> tuple:
+    """
+    Process a single OCR item asynchronously with concurrency control.
+
+    Args:
+        key: The OCR data key
+        file_name: Name of the file
+        content: OCR text content
+        semaphore: Semaphore to control concurrency
+
+    Returns:
+        Tuple of (key, processed_data)
+    """
+    async with semaphore:
+        try:
+            # Get file metadata
+            metadata = await get_file_metadata(file_name)
+
+            # Process content
+            processed_content = await process_content(content, file_name)
+
+            # Generate embeddings
+            embeddings, sparse_embeddings = await generate_embeddings(processed_content)
+
+            result = {
+                "file_name": file_name,
+                "metadata": metadata,
+                "processed_content": processed_content,
+                "embeddings": embeddings,
+                "sparse_embeddings": sparse_embeddings
+            }
+
+            return key, result
+        except Exception as e:
+            print(f"Error processing {file_name}: {str(e)}")
+            print(traceback.format_exc())
+            raise
+
+
 async def main():
     """Main processing function."""
     if len(sys.argv) < 2:
@@ -184,20 +225,27 @@ async def main():
         ocr_data = load_ocr_json(input_file)
         output_data = {}
 
-        for key in ocr_data:
+        # Control concurrency - adjust this value based on your system and API limits
+        max_concurrent_files = 32  # Process up to 32 files concurrently
+        semaphore = asyncio.Semaphore(max_concurrent_files)
+
+        # Prepare tasks for concurrent processing
+        tasks = []
+        all_keys = list(ocr_data.keys())
+        for key in all_keys:
             file_name = mapping[key.removeprefix("ocr_results:ocr_")]
             content = ocr_data[key]['text']
-            metadata = await get_file_metadata(file_name)
-            processed_content = await process_content(content, file_name)
-            embeddings, sparse_embeddings = await generate_embeddings(processed_content)
-            output_data[key] = {
-                "file_name": file_name,
-                "metadata": metadata,
-                "processed_content": processed_content,
-                "embeddings": embeddings,
-                "sparse_embeddings": sparse_embeddings
-            }
-            print(f"Processed {file_name}")
+            tasks.append(process_single_item(key, file_name, content, semaphore))
+
+        print(f"Processing {len(tasks)} files with max {max_concurrent_files} concurrent files...")
+
+        # Process all items concurrently with progress bar
+        results = await tqdm.gather(*tasks, desc="Processing files")
+
+        # Collect results
+        for key, result in results:
+            output_data[key] = result
+            print(f"Processed {result['file_name']}")
 
         # Save results
         print(f"Saving results to: {output_file}")
@@ -206,6 +254,7 @@ async def main():
 
     except Exception as e:
         print(f"Error processing file: {str(e)}")
+        print(traceback.format_exc())
         sys.exit(1)
 
 

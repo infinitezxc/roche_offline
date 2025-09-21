@@ -85,11 +85,6 @@ class Model(ABC):
                             chunk_content = chunk.choices[0].delta.content
                             if chunk_content:
                                 response_text += chunk_content
-                                i += 1
-                                if i % 50 == 0:
-                                    r = re.sub(r"(.+?)\1{30,}", lambda m: m.group(1), response_text)
-                                    if len(response_text) - len(r) > 2000 or len(r) < len(response_text) * 0.5:
-                                        raise ValueError("repeated content: " + response_text)
                         if chunk.usage:
                             usage = chunk.usage
 
@@ -130,14 +125,14 @@ class Model(ABC):
 class QwenVLlocal_7B_0(Model):
     def __init__(self, api_key: str = "EMPTY") -> None:
         super().__init__(
-            api_key=api_key, url="http://localhost:9889/v1", model="Qwen-VL-7B-GPU4"
+            api_key=api_key, url="http://192.168.1.3:9889/v1", model="Qwen-VL-7B-GPU4"
         )
 
 
 class QwenVLlocal_7B_1(Model):
     def __init__(self, api_key: str = "EMPTY") -> None:
         super().__init__(
-            api_key=api_key, url="http://localhost:9890/v1", model="Qwen-VL-7B-GPU5"
+            api_key=api_key, url="http://192.168.1.3:9890/v1", model="Qwen-VL-7B-GPU5"
         )
 
 
