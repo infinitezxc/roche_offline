@@ -108,7 +108,7 @@ Please provide the context below:
         prompts.append((sys_prompt, user_prompt))
 
     # Process prompts with concurrency control
-    semaphore = asyncio.Semaphore(24)
+    semaphore = asyncio.Semaphore(36)
 
     async def process_with_semaphore(sys_prompt, user_prompt):
         async with semaphore:
@@ -174,38 +174,43 @@ def process_single_file_sync(args):
     key, file_name, content, timeout = args
     loop = None
 
-    try:
-        # Check if there's already an event loop
+    # Try processing with one retry on timeout
+    for attempt in range(2):  # 0 = first attempt, 1 = retry
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_closed():
+            # Check if there's already an event loop
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    loop = None
+            except RuntimeError:
                 loop = None
-        except RuntimeError:
-            loop = None
 
-        # Create a new event loop if needed
-        if loop is None:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # Create a new event loop if needed
+            if loop is None:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
 
-        # Run the async processing
-        result = loop.run_until_complete(
-            asyncio.wait_for(
-                process_single_file_async(key, file_name, content),
-                timeout=timeout
+            # Run the async processing
+            result = loop.run_until_complete(
+                asyncio.wait_for(
+                    process_single_file_async(key, file_name, content),
+                    timeout=timeout
+                )
             )
-        )
 
-        return key, result
+            return key, result
 
-    except asyncio.TimeoutError:
-        print(f"Process timeout for {file_name} ({len(content)} pages) after {timeout}s")
-        return key, None
-    except Exception as e:
-        print(f"Process error for {file_name} ({len(content)} pages): {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return key, None
+        except asyncio.TimeoutError:
+            if attempt < 1:
+                continue
+            else:
+                print(f"Process timeout for {file_name} ({len(content)} pages) after {timeout}s on retry, giving up")
+                return key, None
+        except Exception as e:
+            print(f"Process error for {file_name} ({len(content)} pages): {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return key, None
 
 
 async def process_single_file_async(key: str, file_name: str, content: List[str]):
@@ -269,7 +274,7 @@ def main():
         ocr_data = load_ocr_json(input_file)
 
         # Prepare tasks for multiprocessing
-        timeout_per_file = 180  # 3 minutes per file
+        timeout_per_file = 120  # 2 minutes per file
         max_workers = min(mp.cpu_count(), 32)  # Limit to avoid overwhelming the system
 
         tasks = []
@@ -282,7 +287,7 @@ def main():
         print(f"Processing {len(tasks)} files with {max_workers} workers...")
 
         # Process items in batches with multiprocessing
-        batch_size = 5000
+        batch_size = 2000
         part_number = 1
         all_results = {}
 
