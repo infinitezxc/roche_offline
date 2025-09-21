@@ -51,6 +51,16 @@ class Config:
     # Milvus
     milvus_uri = os.getenv("MILVUS_URI")
     milvus_token = os.getenv("MILVUS_TOKEN")
+    milvus_db = os.getenv("MILVUS_DB")
+
+    # Embedding Configuration
+    embedding_url_sparse = os.getenv("EMBEDDING_URL_SPARSE")
+    embedding_model = os.getenv("EMBEDDING_MODEL")
+    embedding_url = os.getenv("EMBEDDING_URL")
+    embedding_key = os.getenv("EMBEDDING_KEY")
+
+    # Logging
+    log_level = os.getenv("LOG_LEVEL", "INFO")
 
 
 # Global config instance

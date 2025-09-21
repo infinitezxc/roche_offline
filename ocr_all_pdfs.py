@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-max_page_count = 100
+max_page_count = 150
 
 def get_pdf_page_count(pdf_path: str) -> int:
     """Get the number of pages in a PDF file."""
