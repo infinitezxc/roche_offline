@@ -22,7 +22,7 @@ def traverse_pdfs_to_json(directory: str, output_file: str = None) -> Dict[str, 
         output_file: Optional output JSON file path
 
     Returns:
-        Dictionary with MD5 hash as key and filename as value
+        Dictionary with MD5 hash as key and dict with 'file_name', 'kb', and 'folder' as value
     """
     pdf_mapping = {}
     directory_path = Path(directory)
@@ -35,7 +35,15 @@ def traverse_pdfs_to_json(directory: str, output_file: str = None) -> Dict[str, 
         if pdf_file.is_file():
             try:
                 md5_hash = calculate_md5(str(pdf_file))
-                pdf_mapping[md5_hash] = pdf_file.name
+                path_parts = pdf_file.parts
+                kb = path_parts[1] if len(path_parts) > 1 else ""
+                folder = path_parts[2] if len(path_parts) > 2 else ""
+
+                pdf_mapping[md5_hash] = {
+                    "file_name": pdf_file.name,
+                    "kb": kb,
+                    "folder": folder
+                }
             except Exception as e:
                 print(f"Error processing {pdf_file}: {e}")
 
@@ -44,7 +52,15 @@ def traverse_pdfs_to_json(directory: str, output_file: str = None) -> Dict[str, 
         if pdf_file.is_file():
             try:
                 md5_hash = calculate_md5(str(pdf_file))
-                pdf_mapping[md5_hash] = pdf_file.name
+                path_parts = pdf_file.parts
+                kb = path_parts[1] if len(path_parts) > 1 else ""
+                folder = path_parts[2] if len(path_parts) > 2 else ""
+
+                pdf_mapping[md5_hash] = {
+                    "file_name": pdf_file.name,
+                    "kb": kb,
+                    "folder": folder
+                }
             except Exception as e:
                 print(f"Error processing {pdf_file}: {e}")
 
@@ -71,10 +87,10 @@ if __name__ == "__main__":
         result = traverse_pdfs_to_json(directory, output_file)
         print(f"Found {len(result)} PDF files")
         print("Sample mapping:")
-        for i, (md5_hash, filename) in enumerate(result.items()):
+        for i, (md5_hash, file_info) in enumerate(result.items()):
             if i >= 5:  # Show only first 5 entries
                 break
-            print(f"  {md5_hash}: {filename}")
+            print(f"  {md5_hash}: {file_info['file_name']} (kb: {file_info['kb']}, folder: {file_info['folder']})")
         if len(result) > 5:
             print(f"  ... and {len(result) - 5} more")
     except Exception as e:

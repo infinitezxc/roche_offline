@@ -70,7 +70,7 @@ async def process_content(content: List[str], file_name: str) -> List[str]:
         List of processed content with context summaries
     """
     # Clean HTML tags and remove repetitive text patterns
-    content = [clean_html_tags(re.sub(r"(.+?)\1{20,}", lambda m: m.group(1), text)) for text in content]
+    content = [clean_html_tags(re.sub(r"(.+?)\1{20,}", lambda m: m.group(1), text)) if text and text.strip() else "" for text in content]
 
     # Detect language based on first 5 pages
     lang = detect_language("\n".join(content[:5]))
@@ -274,13 +274,13 @@ def main():
         ocr_data = load_ocr_json(input_file)
 
         # Prepare tasks for multiprocessing
-        timeout_per_file = 120  # 2 minutes per file
+        timeout_per_file = 300  # 5 minutes per file
         max_workers = min(mp.cpu_count(), 32)  # Limit to avoid overwhelming the system
 
         tasks = []
         all_keys = sorted(list(ocr_data.keys()))
         for key in all_keys:
-            file_name = mapping[key.removeprefix("ocr_results:ocr_")]
+            file_name = mapping[key.removeprefix("ocr_results:ocr_")]["file_name"]
             content = ocr_data[key]['text']
             tasks.append((key, file_name, content, timeout_per_file))
 
@@ -337,10 +337,8 @@ def main():
 
             part_number += 1
 
-        # Save complete results
-        print(f"Saving complete results to: {output_file}")
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(all_results, f, ensure_ascii=False, indent=2)
+        print(f"Processing completed. Part files saved in: {output_dir}")
+        print(f"Total files processed: {len(all_results)}")
 
     except Exception as e:
         print(f"Error processing file: {str(e)}")

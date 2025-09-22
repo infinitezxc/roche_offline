@@ -71,7 +71,7 @@ class Model(ABC):
                     stream_options= {
                         "include_usage": True
                     },
-                    max_tokens=18432,
+                    max_tokens=8192,
                     **kwargs,
                 )
                 response_text = ""
