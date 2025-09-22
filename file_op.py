@@ -9,6 +9,8 @@ import argparse
 from typing import Dict, Any
 
 from models.folder_file_creator import delete_all_files_and_folders_in_kb, create_folders_batch, create_files_batch
+from models.file import FileDB
+from utils.psql_client import db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -171,6 +173,37 @@ def clear_all_kbs():
     logger.info(f"Clear operation completed. Total deleted: {total_files_deleted} files, {total_folders_deleted} folders")
 
 
+def dump_file_mappings(output_file: str):
+    """Dump MD5 to file_id/kb_id mappings to a JSON file."""
+    logger.info(f"Starting dump of file mappings to {output_file}")
+
+    mappings = {}
+
+    try:
+        with db.get_session_context() as session:
+            # Query all files from database
+            files = session.query(FileDB).all()
+
+            for file_record in files:
+                if file_record.kb_id in KB_MAPPINGS.values():
+                    mappings[file_record.file_hash] = {
+                        "file_id": file_record.file_id,
+                        "kb_id": file_record.kb_id
+                    }
+
+            logger.info(f"Found {len(mappings)} file mappings")
+
+        # Write to JSON file
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(mappings, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"Successfully dumped {len(mappings)} file mappings to {output_file}")
+
+    except Exception as e:
+        logger.error(f"Error dumping file mappings: {e}")
+        raise
+
+
 def main():
     """Main function with argument parsing."""
     parser = argparse.ArgumentParser(description="File operations for knowledge base management")
@@ -179,11 +212,19 @@ def main():
         action="store_true",
         help="Clear all files and folders from both knowledge bases"
     )
+    parser.add_argument(
+        "--dump",
+        type=str,
+        metavar="OUTPUT_FILE",
+        help="Dump MD5 to file_id/kb_id mappings to specified JSON file"
+    )
 
     args = parser.parse_args()
 
     if args.clear:
         clear_all_kbs()
+    elif args.dump:
+        dump_file_mappings(args.dump)
     else:
         insert_files_to_postgresql()
 
