@@ -4,7 +4,7 @@ import asyncio
 
 import aiohttp
 import numpy as np
-from portkey_ai import AsyncPortkey
+from openai import AsyncOpenAI
 
 from utils.config import config
 
@@ -27,8 +27,13 @@ async def get_embedding(text: List[str]):
     if not text:
         return []
     cleaned_text = [clean_html_tags(t) for t in text]
-    client = AsyncPortkey(base_url=config.embedding_url, api_key=config.embedding_key)
-    response = await client.embeddings.create(model=config.embedding_model, input=cleaned_text, encoding_format="float")
+    client = AsyncOpenAI(base_url=config.embedding_url, api_key=config.embedding_key)
+    response = await client.embeddings.create(
+        model=config.embedding_model, input=cleaned_text, encoding_format="float",
+        extra_body={
+            "truncate_prompt_tokens": -1
+        }
+    )
     return [normalize_embedding(x.embedding) for x in response.data]
 
 

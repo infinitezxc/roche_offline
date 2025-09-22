@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-max_page_count = 150
+max_page_count = 200
 
 def get_pdf_page_count(pdf_path: str) -> int:
     """Get the number of pages in a PDF file."""
@@ -189,7 +189,7 @@ async def process_pdf_file(pdf_path: str, semaphore: asyncio.Semaphore) -> dict:
 async def process_new_files(directory_path: str):
     """Process only new or modified PDF files in the specified directory."""
     ori_directory = directory_path
-    max_concurrency = 32
+    max_concurrency = 8
 
     if not os.path.exists(ori_directory):
         logger.error(f"Directory {ori_directory} does not exist")
