@@ -15,14 +15,16 @@ def calculate_md5(file_path: str) -> str:
 
 def traverse_pdfs_to_json(directory: str, output_file: str = None) -> Dict[str, str]:
     """
-    Traverse all PDFs in the given directory and create a mapping of MD5 hash to filename.
+    Traverse all PDFs in the given directory and create a mapping of MD5 hash to
+    file metadata.
 
     Args:
         directory: Directory path to traverse
         output_file: Optional output JSON file path
 
     Returns:
-        Dictionary with MD5 hash as key and dict with 'file_name', 'kb', and 'folder' as value
+        Dictionary with MD5 hash as key and dict with 'file_name', 'kb',
+        'folder', and 'file_size' (bytes) as value
     """
     pdf_mapping = {}
     directory_path = Path(directory)
@@ -42,7 +44,8 @@ def traverse_pdfs_to_json(directory: str, output_file: str = None) -> Dict[str, 
                 pdf_mapping[md5_hash] = {
                     "file_name": pdf_file.name,
                     "kb": kb,
-                    "folder": folder
+                    "folder": folder,
+                    "file_size": pdf_file.stat().st_size
                 }
             except Exception as e:
                 print(f"Error processing {pdf_file}: {e}")
@@ -59,7 +62,8 @@ def traverse_pdfs_to_json(directory: str, output_file: str = None) -> Dict[str, 
                 pdf_mapping[md5_hash] = {
                     "file_name": pdf_file.name,
                     "kb": kb,
-                    "folder": folder
+                    "folder": folder,
+                    "file_size": pdf_file.stat().st_size
                 }
             except Exception as e:
                 print(f"Error processing {pdf_file}: {e}")
